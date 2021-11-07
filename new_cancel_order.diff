@@ -1,0 +1,155 @@
+diff --git a/controllers/SourceOrderController.js b/controllers/SourceOrderController.js
+index e1b5286..78c7146 100644
+--- a/controllers/SourceOrderController.js
++++ b/controllers/SourceOrderController.js
+@@ -433,7 +433,7 @@ module.exports.getFeedStatus = async (req, res) => {
+       awsCredentials: marketPlaceAccount.aws_credentials,
+       submissionId: req.params.feedId
+     })
+-    console.log("Result", result)
++    console.log("Result", JSON.stringify(result, null, 2))
+     return res.status(200).json({ data: null, message: "", success: true })
+   } catch (error) {
+     console.log("error", error)
+@@ -804,6 +804,7 @@ module.exports.cancelMarketplaceOrder = async (req, res) => {
+       },
+       include: [{ model: SourceItem }]
+     })
++    console.log("sourceOrder: ", toRaw(sourceOrder))
+     if (!sourceOrder) return res.status(404).json({ error: "order not found", success: false })
+ 
+     const account = await Account.findOne({ where: { id: sourceOrder.marketplace_account_id } })
+@@ -830,40 +831,46 @@ module.exports.cancelMarketplaceOrder = async (req, res) => {
+       }
+     } else {
+       console.log(" IN AMAZON")
+-      const feedContent = cancellationFeed({ orderId: sourceOrder.marketplace_order_id, sellerId: account.access_id })
+-      console.log(account)
++      const orders = toRaw(sourceOrder)
++      let itemId = orders?.source_items[0]?.asin
++      if (!itemId) {
++        const suppliers = await getSuppliers({ email: account.email }, { platform: MARKET_PLACES.amazon, skus: [toRaw(sourceOrder)?.source_items[0]?.sku], isDefault: true })
++        itemId = suppliers[0].item_id
++      }
++      const feedContent = cancellationFeed({ orderId: sourceOrder.marketplace_order_id, sellerId: account.access_id, itemId })
++      console.log(feedContent)
+       const res = await cancelAmazonOrderFeed(
+         { accessId: account.access_id, accessSecret: account.access_secret, awsCredentials: account.aws_credentials },
+         feedContent
+       )
+       console.log("res", res)
+       feedId = res.FeedSubmissionInfo.FeedSubmissionId
+-      await MWSSubmission.create({
+-        seller_id: account.accessId,
+-        submission_id: res.FeedSubmissionInfo.FeedSubmissionId,
+-        feed_type: res.FeedSubmissionInfo.FeedType,
+-        submission_date: res.FeedSubmissionInfo.SubmittedDate,
+-        status: res.FeedSubmissionInfo.FeedProcessingStatus,
+-        response: JSON.stringify(res)
+-      })
++      // await MWSSubmission.create({
++      //   seller_id: account.accessId,
++      //   submission_id: res.FeedSubmissionInfo.FeedSubmissionId,
++      //   feed_type: res.FeedSubmissionInfo.FeedType,
++      //   submission_date: res.FeedSubmissionInfo.SubmittedDate,
++      //   status: res.FeedSubmissionInfo.FeedProcessingStatus,
++      //   response: JSON.stringify(res)
++      // })
+     }
+-    sourceOrder.status = SOURCE_ORDER_STATUSES.cancelled
+-    sourceOrder.marketplace_status = MARKETPLACE_STATUSES.Cancelled
+-    await sourceOrder.save({ req })
+-
+-    await SourceItem.update(
+-      { status: SOURCE_ORDER_STATUSES.cancelled, marketplace_status: MARKETPLACE_STATUSES.Cancelled },
+-      {
+-        where: {
+-          source_order_id: req.params.id
+-        }
+-      }
+-    )
+-    await OrderLog.create({
+-      source_order_id: sourceOrder.id,
+-      created_by: currentUser(req.headers),
+-      note: `Order Cancelled On Marketplace: ${req.body.cancel_reason}`
+-    })
++    // sourceOrder.status = SOURCE_ORDER_STATUSES.cancelled
++    // sourceOrder.marketplace_status = MARKETPLACE_STATUSES.Cancelled
++    // await sourceOrder.save({ req })
++
++    // await SourceItem.update(
++    //   { status: SOURCE_ORDER_STATUSES.cancelled, marketplace_status: MARKETPLACE_STATUSES.Cancelled },
++    //   {
++    //     where: {
++    //       source_order_id: req.params.id
++    //     }
++    //   }
++    // )
++    // await OrderLog.create({
++    //   source_order_id: sourceOrder.id,
++    //   created_by: currentUser(req.headers),
++    //   note: `Order Cancelled On Marketplace: ${req.body.cancel_reason}`
++    // })
+     return res.status(200).json({ message: "order cancelled on marketplace successfully", success: true, data: { feedId } })
+   } catch (error) {
+     console.log("Error", error)
+diff --git a/templates/PostOrderFulfillment.js b/templates/PostOrderFulfillment.js
+index a639777..5a574bb 100644
+--- a/templates/PostOrderFulfillment.js
++++ b/templates/PostOrderFulfillment.js
+@@ -13,14 +13,18 @@ function fullFillmentFeed ({ orders, sellerId }) {
+   return JSONToXML.parse("AmazonEnvelope", feed)
+ }
+ 
+-function cancellationFeed ({ orderId, sellerId }) {
++function cancellationFeed ({ orderId, sellerId, itemId }) {
+   const feed = {
+     Header: {
+       DocumentVersion: "1.01",
+       MerchantIdentifier: sellerId
+     },
+-    MessageType: "OrderFulfillment",
+-    Message: { "order-id": orderId }
++    MessageType: "OrderAcknowledgement",
++    Message: {
++      MessageID: 1,
++      OrderAcknowledgement: { AmazonOrderID: orderId, StatusCode: "Failure" },
++      Item: { MerchantOrderItemID: "A25DPGHLKODDOE", CancelReason: "CustomerReturn" }
++    }
+   }
+   return JSONToXML.parse("AmazonEnvelope", feed)
+ }
+@@ -50,7 +54,10 @@ function carrier (name, trackingNumber) {
+   if (carrierCode) {
+     return { CarrierCode: carrierCode }
+   } else {
+-    return { CarrierName: carrierMapping[name] || carrierMapping[getCarrierByTrackingNum(trackingNumber)] || name.split("_").join(" ") }
++    return {
++      CarrierName:
++        carrierMapping[name] || carrierMapping[getCarrierByTrackingNum(trackingNumber)] || name.split("_").join(" ")
++    }
+   }
+ }
+ 
+diff --git a/utils/mws.js b/utils/mws.js
+index a2e36ac..9eda3fd 100644
+--- a/utils/mws.js
++++ b/utils/mws.js
+@@ -83,7 +83,7 @@ async function cancelAmazonOrderFeed ({ accessId, accessSecret, awsCredentials }
+       Action: "SubmitFeed",
+       SellerId: accessId,
+       MWSAuthToken: accessSecret,
+-      FeedType: "_POST_FLAT_FILE_ORDER_ACKNOWLEDGEMENT_DATA_",
++      FeedType: "_POST_ORDER_ACKNOWLEDGEMENT_DATA_",
+       FeedContent: feedContent,
+       "MarketplaceId.Id.1": DEFAULT_AMAZON_USA_REGION
+     }
+@@ -306,7 +306,7 @@ async function getReportRequestList ({ accessId, accessSecret, reportId }) {
+       "ReportRequestIdList.Id.1": reportId
+     }
+     const res = await mwsAccessObj.reports.search(reqBody)
+-    return res
++    if (/Invalid.*XML/.test(res.Message)) { throw new Error(res) } else { return res }
+   } catch (error) {
+     return Promise.reject(error)
+   }

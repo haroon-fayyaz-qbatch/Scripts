@@ -1,0 +1,76 @@
+require("dotenv/config")
+const fetch = require("node-fetch")
+const { MATCHING_API_BASE_URL, SYSTEM_MATCH_BASIC_AUTH_USER, SYSTEM_MATCH_BASIC_AUTH_PASSWORD, SYSTEM_MATCH_API_BASE_URL } = process.env
+const FormData = require("form-data")
+const { toRaw, jwtToken } = require("../utils/common")
+const { encode, decode } = require("../utils/base64")
+const { MATCHING_LOGS_URL } = require("../config/constants")
+
+async function responseFromMatchingAPI (req) {
+  const requestOptions = {
+    headers: {
+      Accept: "application/json",
+      ...(req.file ? {} : { "Content-Type": "application/json" }),
+      Authorization: "Basic " + "YXBpQ2FsbGluZ1dpdGhQZXJtaXNzaW9uOnoqVUhSfUg3Z1JoTlBmS3Y="
+      // encode(jwtToken(req).email + ":")
+    },
+    method: req.method,
+    ...(req.file ? { body: getFormData(req) } : Object.keys(req.body).length && { body: JSON.stringify(req.body) })
+  }
+  console.log("requestOptions", MATCHING_API_BASE_URL + req.url, requestOptions)
+  console.log("decode: ", decode(encode(jwtToken(req).email + ":")))
+  return fetch(MATCHING_API_BASE_URL + "/api" + req.url, requestOptions).then(handleResponse)
+}
+
+async function getLogsFromMatchingAPI (req) {
+  const { query } = req
+  let url = `${MATCHING_LOGS_URL[query.url_type]}?`
+  delete query.url_type
+  url += Object.keys(query).map((key) => `${key}=${query[key]}`).join("&")
+  const requestOptions = {
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: "Basic " + encode(jwtToken(req).email + ":")
+    },
+    method: req.method
+  }
+  return fetch(MATCHING_API_BASE_URL + url, requestOptions).then(handleResponse)
+}
+
+function getFormData (req) {
+  const formData = new FormData()
+  const body = toRaw(req.body)
+  Object.keys(body).forEach((key) => formData.append(key, body[key]))
+  formData.append(req.file.fieldname, req.file.buffer, req.file.originalname)
+  return formData
+}
+
+function handleResponse (response) {
+  return response.text().then((text) => {
+    const data = text && JSON.parse(text)
+    if (!response.ok) {
+      return Promise.reject(data)
+    }
+    return data
+  })
+}
+
+async function getAvailableMatchesCount (req) {
+  const requestOptions = {
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: "Basic " + encode(SYSTEM_MATCH_BASIC_AUTH_USER + ":" + SYSTEM_MATCH_BASIC_AUTH_PASSWORD)
+    },
+    method: req.method,
+    ...(Object.keys(req.body).length && { body: JSON.stringify(req.body) })
+  }
+  return fetch(SYSTEM_MATCH_API_BASE_URL + req.url, requestOptions).then(handleResponse)
+}
+
+module.exports = {
+  responseFromMatchingAPI,
+  getAvailableMatchesCount,
+  getLogsFromMatchingAPI
+}

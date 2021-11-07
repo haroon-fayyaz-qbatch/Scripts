@@ -1,0 +1,213 @@
+require("dotenv/config")
+require("../utils/prototypes")
+const fs = require("fs")
+const moment = require("moment")
+const { Account } = require("../models")
+const { groupBy, keys, flatten, reduce } = require("lodash")
+const { allSchemas, getModels } = require("../utils/sequelizeHelper")
+const { parseMessage } = require("../utils/logger")
+const { sleep, pricePredicate, costPredicate } = require("../utils/common")
+const { Op } = require("sequelize")
+const { SOURCE_ORDER_STATUSES, MARKETPLACE_STATUSES, SUPPLIER_ORDER_STATUSES } = require("../config/constants")
+const { isExists, createDir } = require("../utils/dir")
+
+const toF = num => +num.toFixed(2)
+
+const print = (...msg) => {
+  const lines = parseMessage(msg).split("\n")
+  lines.forEach(msgLine => console.log(moment().format(), msgLine))
+}
+
+const getOrdersData = async (IdOrReq, whereSourceOrder, groupField = "marketplace_account_id") => {
+  if (!whereSourceOrder) {
+    whereSourceOrder = {
+      status: { [Op.notIn]: [SOURCE_ORDER_STATUSES.cancelled, SOURCE_ORDER_STATUSES.refund] },
+      marketplace_status: { [Op.ne]: MARKETPLACE_STATUSES.Cancelled }
+    }
+  }
+  const { SourceOrder, SupplierOrder, SourceItem } = getModels(IdOrReq)
+  let sourceOrders = await SourceOrder.fetchAll({
+    attributes: ["marketplace_order_id", "marketplace_account_id"],
+    raw: true,
+    where: whereSourceOrder,
+    include: [
+      {
+        attributes: ["sku", "cost", "qty", "tax", "shipping_cost", "promotions"],
+        model: SupplierOrder,
+        where: { status: SUPPLIER_ORDER_STATUSES.processed }
+      },
+      {
+        attributes: ["sku", "qty", "comission", "shipping", "refund", "price"],
+        where: { shared_listing: true },
+        model: SourceItem
+      }
+    ]
+  })
+  sourceOrders = sourceOrders.map(order => {
+    const itemsSku = order.source_items.map(item => item.sku)
+    order.supplier_orders = order.supplier_orders.filter(_o => itemsSku.includes(_o.sku))
+    return order
+  })
+  return groupBy(sourceOrders, groupField)
+}
+
+const calculateCost = order => reduce(order.supplier_orders, costPredicate, 0)
+const calculateSale = order => reduce(order.source_items, pricePredicate, 0)
+
+const generateProfitReport = async accounts => {
+  const allStats = []
+  for (const { id, email } of accounts) {
+    const groupedData = await getOrdersData(id)
+    const stats = await keys(groupedData).parallel(partnerId => {
+      const profit = reduce(groupedData[partnerId], (acc, curr) => acc + calculateSale(curr) - calculateCost(curr), 0)
+      return {
+        partner_id: partnerId,
+        total_orders: groupedData[partnerId].length,
+        total_profits: profit ? toF(profit) : 0
+      }
+    }, 20)
+
+    if (!isExists("./5050_invoices/")) createDir("./5050_invoices/")
+
+    fs.writeFileSync(`5050_invoices/invoice_${id}.html`, invoiceTemplate(email, stats))
+    allStats.push(stats)
+  }
+  return flatten(allStats)
+}
+
+;(async () => {
+  try {
+    print("START")
+    const accountIds = await allSchemas("source_orders", { justIds: true })
+    const accounts = await Account.findAll({ raw: true, attributes: ["id", "email"], where: { id: accountIds } })
+    print("Total Tenants:", accountIds.length)
+    await generateProfitReport(accounts)
+  } catch (err) {
+    print("Err:", err)
+  } finally {
+    print("DONE")
+    await sleep(1)
+    process.exit(1)
+  }
+})()
+
+const invoiceTemplate = (email, data) => {
+  let total = 0
+  const template = `
+  <!DOCTYPE>
+  <html>
+  <head>
+      <link href="https://fonts.googleapis.com/css?family=Roboto:400,400i,700,700i" rel="stylesheet">
+  </head>
+  <body>
+  <style>
+    table > tbody > tr >  td{
+      border-bottom: 0.5px solid rgba(162, 184, 194, 0.5);
+      padding: 15px 0;
+    }
+    table tr td,th{
+      text-align: left;
+    }
+
+  </style>
+    <div style="background-color: #FBFBFB;padding: 40px; font-family: 'Roboto', sans-serif;">
+      <table >
+        <thead>
+        <tr>
+          <td>
+            <div style="margin-bottom: 15px;">
+            <svg width="217" height="40" viewBox="0 0 217 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.2355 17.114L19.2553 12.6581C19.1917 12.5681 19.1069 12.4951 19.0085 12.4454C18.9101 12.3956 18.8009 12.3707 18.6906 12.3728C18.5795 12.3705 18.4696 12.396 18.371 12.4471C18.2723 12.4981 18.188 12.573 18.1259 12.6649L15.1457 17.114H11.8865C11.706 17.114 11.533 17.1855 11.4054 17.3129C11.2778 17.4403 11.2061 17.6131 11.2061 17.7932C11.2051 17.8554 11.2143 17.9174 11.2333 17.9766L12.9615 24.2732C13.0404 24.5585 13.2109 24.8101 13.447 24.9893C13.683 25.1685 13.9714 25.2653 14.2679 25.2649H23.1133C23.4104 25.2644 23.6992 25.1674 23.9361 24.9885C24.1731 24.8095 24.3452 24.5585 24.4265 24.2732L26.1547 17.9766L26.1751 17.7932C26.1751 17.6131 26.1035 17.4403 25.9759 17.3129C25.8482 17.1855 25.6752 17.114 25.4947 17.114H22.2355ZM16.6494 17.114L18.6906 14.1253L20.7318 17.114H16.6494ZM18.6906 22.5479C18.4215 22.5479 18.1584 22.4682 17.9346 22.319C17.7108 22.1697 17.5364 21.9575 17.4334 21.7093C17.3304 21.4611 17.3034 21.1879 17.3559 20.9244C17.4084 20.6609 17.538 20.4188 17.7284 20.2288C17.9187 20.0388 18.1611 19.9095 18.4251 19.857C18.6891 19.8046 18.9627 19.8315 19.2114 19.9343C19.46 20.0372 19.6726 20.2113 19.8221 20.4347C19.9716 20.6581 20.0514 20.9207 20.0514 21.1894C20.0503 21.5494 19.9066 21.8943 19.6517 22.1488C19.3967 22.4034 19.0512 22.5468 18.6906 22.5479Z" fill="#333A4F"/>
+              <path d="M19.031 35.6413C28.2376 35.6413 35.7011 28.1907 35.7011 18.9998C35.7011 9.80896 28.2376 2.35831 19.031 2.35831C9.82436 2.35831 2.3609 9.80896 2.3609 18.9998C2.3609 28.1907 9.82436 35.6413 19.031 35.6413Z" stroke="#556FE6" stroke-width="3"/>
+              <path d="M38.0826 26.9809C42.4041 26.9809 45.9074 23.4837 45.9074 19.1696C45.9074 14.8556 42.4041 11.3583 38.0826 11.3583C33.7611 11.3583 30.2579 14.8556 30.2579 19.1696C30.2579 23.4837 33.7611 26.9809 38.0826 26.9809Z" stroke="#556FE6" stroke-width="3"/>
+              <path d="M63.808 9.152H53.488V26H63.808V22.712H57.592V19.016H63.088V15.848H57.592V12.44H63.808V9.152ZM65.8964 19.304C65.8964 23.552 68.6804 26.192 72.6164 26.192C75.9764 26.192 78.3524 24.248 79.0484 21.152H74.6804C74.3204 22.136 73.6724 22.688 72.5444 22.688C71.0804 22.688 70.0724 21.536 70.0724 19.304C70.0724 17.072 71.0804 15.92 72.5444 15.92C73.6724 15.92 74.3444 16.52 74.6804 17.456H79.0484C78.3524 14.264 75.9764 12.416 72.6164 12.416C68.6804 12.416 65.8964 15.08 65.8964 19.304ZM94.5876 19.304C94.5876 15.056 91.5636 12.416 87.6276 12.416C83.7156 12.416 80.6676 15.056 80.6676 19.304C80.6676 23.552 83.6436 26.192 87.5796 26.192C91.5156 26.192 94.5876 23.552 94.5876 19.304ZM84.8436 19.304C84.8436 17.024 86.1396 15.968 87.6276 15.968C89.0676 15.968 90.4116 17.024 90.4116 19.304C90.4116 21.56 89.0436 22.64 87.5796 22.64C86.0916 22.64 84.8436 21.56 84.8436 19.304ZM115.461 26H119.541V18.176C119.541 14.576 117.405 12.464 114.093 12.464C112.149 12.464 110.469 13.544 109.581 14.96C108.669 13.352 107.037 12.464 105.021 12.464C103.269 12.464 101.901 13.208 101.109 14.288V12.608H97.0049V26H101.109V18.728C101.109 16.976 102.117 16.016 103.677 16.016C105.237 16.016 106.245 16.976 106.245 18.728V26H110.325V18.728C110.325 16.976 111.333 16.016 112.893 16.016C114.453 16.016 115.461 16.976 115.461 18.728V26Z" fill="#333A4F"/>
+              <path d="M122.195 17.624C122.195 22.64 125.867 26.144 130.547 26.144C134.171 26.144 137.051 24.344 138.299 21.128H135.683C134.771 23.12 132.995 24.248 130.547 24.248C127.043 24.248 124.427 21.704 124.427 17.624C124.427 13.52 127.043 10.976 130.547 10.976C132.995 10.976 134.771 12.104 135.683 14.12H138.299C137.051 10.88 134.171 9.056 130.547 9.056C125.867 9.056 122.195 12.608 122.195 17.624ZM141.79 26H143.974V12.848H141.79V26ZM142.918 10.712C143.71 10.712 144.358 10.064 144.358 9.224C144.358 8.384 143.71 7.736 142.918 7.736C142.078 7.736 141.43 8.384 141.43 9.224C141.43 10.064 142.078 10.712 142.918 10.712ZM150.12 18.848C150.12 15.8 151.704 14.864 153.792 14.864H154.368V12.608C152.28 12.608 150.864 13.52 150.12 14.984V12.848H147.936V26H150.12V18.848ZM156.314 19.4C156.314 23.576 158.978 26.216 162.722 26.216C165.986 26.216 168.122 24.392 168.794 21.776H166.442C165.962 23.432 164.666 24.368 162.722 24.368C160.322 24.368 158.546 22.664 158.546 19.4C158.546 16.184 160.322 14.48 162.722 14.48C164.666 14.48 165.986 15.488 166.442 17.072H168.794C168.122 14.312 165.986 12.632 162.722 12.632C158.978 12.632 156.314 15.272 156.314 19.4ZM171.948 26H174.132V8.24H171.948V26ZM183.686 14.48C185.942 14.48 187.862 15.896 187.838 18.464H179.534C179.774 15.896 181.55 14.48 183.686 14.48ZM189.83 21.944H187.478C186.998 23.36 185.75 24.368 183.782 24.368C181.55 24.368 179.678 22.904 179.51 20.24H190.022C190.07 19.784 190.094 19.4 190.094 18.92C190.094 15.32 187.598 12.632 183.782 12.632C179.942 12.632 177.278 15.248 177.278 19.4C177.278 23.576 180.038 26.216 183.782 26.216C187.046 26.216 189.158 24.344 189.83 21.944ZM202.673 22.424C202.577 17.72 194.945 19.424 194.945 16.304C194.945 15.248 195.905 14.48 197.513 14.48C199.265 14.48 200.273 15.44 200.369 16.76H202.553C202.409 14.192 200.489 12.632 197.585 12.632C194.657 12.632 192.761 14.288 192.761 16.304C192.761 21.2 200.537 19.496 200.537 22.424C200.537 23.504 199.577 24.368 197.849 24.368C196.001 24.368 194.873 23.408 194.753 22.136H192.497C192.641 24.536 194.801 26.216 197.873 26.216C200.777 26.216 202.673 24.584 202.673 22.424Z" fill="#556FE6"/>
+              </svg>
+            </div>
+            </td></tr>
+        <tr>
+          <td><h1 style="font-size:24px;font-family: 'Roboto', sans-serif;font-weight: 500; ">Invoice</h1></td>
+        </tr>
+        <tr style="font-size:12px;font-family: 'Roboto', sans-serif;font-weight: 500; ">
+          <td>Email</td>
+          <td>Invoice Date</td>
+          </td>
+        </tr>
+        <tr style="font-size:12px;font-family: 'Roboto', sans-serif;font-weight: 500;  color:#718690">
+          <td>${email}</td>
+          <td>${moment().format("YYYY-MM-DD")}</td>
+        </tr>
+      </thead>
+      </table>
+    </div>
+        <div style="padding: 40px;">
+          <table style="width:100%;border-collapse: collapse; font-size:12px;font-family: 'Roboto', sans-serif;font-weight: normal; font-style: normal;" >
+            <thead>
+              <tr style="font-size:12px;font-family: 'Roboto', sans-serif;font-weight: 500;  color:#A2B8C2">
+                <th>Store Name</th>
+                <th>Total Orders</th>
+                <th>Total Profit</th>
+                <th>50% Profit</th>
+              </tr>
+          </thead>
+          <tbody style="padding-top:20px">
+          ${
+            data &&
+            data
+              .map(item => {
+                total += item.total_profits
+                return `<tr>
+                      <td>${item?.name || ""}</td>
+                      <td>${item?.total_orders || "0"}</td>
+                      <td>${getAmountText(item.total_profits)}</td>
+                      <td>${getAmountText(toF(item.total_profits / 2))}</td>
+                      </tr>`
+              })
+              .join("")
+          }
+          <tr>
+              <td style="border: none;"></td>
+              <td style="color:#A2B8C2">SUBTOTAL</td>
+              <td>${getAmountText(total)}</td>
+              <td>${getAmountText(toF(total / 2))}</td>
+            </tr>
+           </tbody>
+          </table>
+      <div style="padding:50px 0 20px">
+        <table>
+          <thead>
+            <tr>
+              <td>
+                If you have any questions about this receipt, simply contact our support team
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Cheers,
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Ecom Circles
+              </td>
+            </tr>
+            <tr>
+              <td>
+                -------------------------------------
+              </td>
+            </tr>
+          </thead>
+        </table>
+      </div>
+    </body>
+  </html>`
+  return template
+}
+
+const getAmountText = amount => {
+  if (!amount) return ""
+  if (amount < 0) return "-$" + (amount * -1).toLocaleString()
+  return "$" + amount.toLocaleString()
+}
+
+module.exports = { getOrdersData }

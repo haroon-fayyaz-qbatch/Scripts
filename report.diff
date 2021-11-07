@@ -1,0 +1,13 @@
+diff --git a/controllers/SourceOrderController.js b/controllers/SourceOrderController.js
+index bb2e1f6..e7f8ced 100644
+--- a/controllers/SourceOrderController.js
++++ b/controllers/SourceOrderController.js
+@@ -1145,7 +1145,7 @@ module.exports.exportOrders = async (req, res) => {
+     if (reportType === "5050") {
+       sourceOrders = sourceOrders.map(order => {
+         const itemsSku = order.source_items.map(item => item.sku)
+-        order.supplier_orders = order.supplier_orders.map(spOrder => spOrder.sku).filter(sku => itemsSku.includes(sku))
++        order.supplier_orders = order.supplier_orders.filter(_o => itemsSku.includes(_o.sku))
+         return order
+       })
+     }
