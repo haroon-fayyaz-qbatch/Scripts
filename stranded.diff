@@ -1,0 +1,170 @@
+diff --git a/config/constants.js b/config/constants.js
+index db7ef894..21512dda 100644
+--- a/config/constants.js
++++ b/config/constants.js
+@@ -306,7 +306,8 @@ module.exports = {
+     "account_warehouses",
+     "tracking_items",
+     "oauth_client_apps",
+-    "tracking_item_notices"
++    "tracking_item_notices",
++    "inventory_products"
+   ],
+   DEFAULT_TENANT,
+   BLACK_LISTED_CARRIERS: [
+diff --git a/controllers/Warehouse/TrackingItemsController.js b/controllers/Warehouse/TrackingItemsController.js
+index 0ceb1b49..c41869a9 100644
+--- a/controllers/Warehouse/TrackingItemsController.js
++++ b/controllers/Warehouse/TrackingItemsController.js
+@@ -9,12 +9,14 @@ const {
+   TrackingItemNotice,
+   Warehouse,
+   query: runQuery,
++  InventoryProduct,
+   Sequelize: { fn, col, where: sqWhere }
+ } = require("../../models")
+ const { handleErr, parsePagination, authResponse } = require("../../utils/common")
+ const { authUserInfo, getTenantId } = require("../../utils/currentUser")
+ const { getEasyPostCarrier, createTracker } = require("../../utils/easyPostApi")
+ const { createNotificationsForAll } = require("../../utils/notificationsHelper")
++const { getModels } = require("../../utils/sequelizeHelper")
+ 
+ const inBoundStatuses = [ORDER_TRACKING_STATUSES.shipped, ORDER_TRACKING_STATUSES.in_transit]
+ const excludeCols = ["updated_at"]
+@@ -205,3 +207,69 @@ module.exports.update = async (req, res) => {
+     return handleErr(error, res)
+   }
+ }
++
++module.exports.resolveStrandedItem = async (req, res) => {
++  try {
++    const { sku, itemId, account_id: accountId, sourceOrderId, warehouseId } = req.body
++    const trackingItem = await TrackingItem.findByPk(req.params.id, { paranoid: false })
++    if (!trackingItem) return res.status(404).json({ success: false, message: "Tracking Item not found" })
++    const { SourceItem, SupplierOrder } = getModels(accountId)
++    const sourceItem = SourceItem.findOne({
++      where: { source_order_id: sourceOrderId, sku, marketplace_item_id: itemId }
++    })
++    if (!sourceItem) return res.status(404).json({ success: false, message: "Source Item not found" })
++    const supplierOrder = await SupplierOrder.findOne({ where: { source_order_id: sourceOrderId, sku } })
++    if (!supplierOrder) return res.status(404).json({ success: false, message: "Supplier Order not found" })
++    const inventory = await InventoryProduct.create({
++      source_item_id: sourceItem.id,
++      sku,
++      shipping: supplierOrder.shipping_cost,
++      qty: trackingItem.qty,
++      account_id: accountId,
++      warehouse_id: warehouseId
++    })
++    trackingItem.inventory_id = inventory.id
++    return res.status(200).json({ success: true, data: inventory, message: "Product Successfully added to inventory" })
++  } catch (error) {
++    return handleErr(error, res)
++  }
++}
++
++module.exports.readStrandedItems = async (req, res) => {
++  try {
++    const { query } = req
++    const [page, limit, offset] = parsePagination(req, 50)
++    const decodeToken = authUserInfo(req)
++    const where = {}
++    if (decodeToken.account_id === 2 || [USER_ROLES.owner, USER_ROLES.admin].includes(decodeToken?.role)) {
++      where.account_id = decodeToken.account_id
++    } else if (!decodeToken?.isWH) return authResponse(res)
++    if (decodeToken?.isWH && query.account_id) {
++      const accounts = await AccountWarehouse.findAll({
++        attributes: ["account_id"],
++        where: { warehouse_id: decodeToken?.warehouse_id },
++        raw: true
++      })
++      if (!accounts.map(acc => acc.account_id).includes(+query.account_id)) {
++        return res.status(400).json({ success: false, message: "Not a valid account id" })
++      }
++      where.account_id = query.account_id
++    }
++    if (!where.account_id) return res.status(404).json({ success: false, message: "Account not found" })
++    const { SourceItem } = getModels(where.account_id)
++    Object.entries(query).forEach(([key, value]) => (where[key] = value))
++
++    const { rows: data, count } = await InventoryProduct.fetchAndCountAll({
++      raw: true,
++      include: { model: SourceItem, required: true },
++      where,
++      limit,
++      offset,
++      order: [["updated_at", "DESC"]],
++      subQuery: false
++    })
++    return res.status(200).json({ success: true, count, data, page, per_page: limit })
++  } catch (error) {
++    return handleErr(error, res)
++  }
++}
+diff --git a/joiSchemas/Warehouse/TrackingItemSchema.js b/joiSchemas/Warehouse/TrackingItemSchema.js
+index 91b13a6e..67ddd621 100644
+--- a/joiSchemas/Warehouse/TrackingItemSchema.js
++++ b/joiSchemas/Warehouse/TrackingItemSchema.js
+@@ -38,6 +38,14 @@ const addUser = Joi.object({
+   warehouse_id: Joi.number().required()
+ })
+ 
++const addInventory = Joi.object({
++  sku: Joi.string().trim().required(),
++  warehouseId: Joi.number().required(),
++  sourceOrderId: Joi.number().required(),
++  account_id: Joi.number().required(),
++  itemId: Joi.number().required()
++})
++
+ const verifyInvite = Joi.object({
+   password: Joi.string().trim().min(8).max(25).required(),
+   password_confirm: Joi.any().valid(Joi.ref("password")).required(),
+@@ -45,4 +53,4 @@ const verifyInvite = Joi.object({
+   token: Joi.string().trim().required()
+ })
+ 
+-module.exports = { update, addUser, verifyInvite, addNotice }
++module.exports = { update, addUser, verifyInvite, addNotice, addInventory }
+diff --git a/models/tracking_item.js b/models/tracking_item.js
+index a7dccbab..556ada69 100644
+--- a/models/tracking_item.js
++++ b/models/tracking_item.js
+@@ -46,7 +46,8 @@ module.exports = (sequelize, DataTypes) => {
+         defaultValue: null,
+         allowNull: true
+       },
+-      is_shipped: { type: DataTypes.BOOLEAN, defaultValue: false }
++      is_shipped: { type: DataTypes.BOOLEAN, defaultValue: false },
++      inventory_id: { type: DataTypes.INTEGER, references: { model: "inventory_products", key: "id" } }
+     },
+     {
+       ...MODEL_OPTS,
+@@ -66,6 +67,7 @@ module.exports = (sequelize, DataTypes) => {
+     TrackingItem.belongsTo(models.accounts, { foreignKey: "account_id" })
+     TrackingItem.belongsTo(models.warehouses, { foreignKey: "warehouse_id" })
+     TrackingItem.hasMany(models.tracking_item_notices, { foreignKey: "tracking_item_id" })
++    TrackingItem.hasOne(models.inventory_products, { foreignKey: "inventory_id" })
+   }
+   TrackingItem.addHook("afterSave", async trackingItem => {
+     const { SourceOrder, MarketplaceAccount } = getModels(trackingItem.account_id)
+diff --git a/routes/trackingItem.routes.js b/routes/trackingItem.routes.js
+index b7e7e159..85e727ab 100644
+--- a/routes/trackingItem.routes.js
++++ b/routes/trackingItem.routes.js
+@@ -2,12 +2,14 @@ const router = require("express").Router()
+ const TrackingItemsController = require("../controllers/Warehouse/TrackingItemsController")
+ const RequestValidator = require("../middlewares/requestValidator")
+ const { BearerAuth } = require("../middlewares/auth")
+-const { update, addNotice } = require("../joiSchemas/Warehouse/TrackingItemSchema")
++const { update, addNotice, addInventory } = require("../joiSchemas/Warehouse/TrackingItemSchema")
+ 
+ module.exports = app => {
+   router.get("/:id", TrackingItemsController.read)
+   router.get("/", TrackingItemsController.readAll)
+   router.put("/:id", RequestValidator(update), TrackingItemsController.update)
+   router.post("/:id/add_notice", RequestValidator(addNotice), TrackingItemsController.addNotice)
++  router.post("/:id/add_inventory", RequestValidator(addInventory), TrackingItemsController.resolveStrandedItem)
++  router.get("/read_inventory", TrackingItemsController.readStrandedItems)
+   app.use("/tracking_items", BearerAuth, router)
+ }

@@ -1,0 +1,91 @@
+diff --git a/controllers/SourceOrderController.js b/controllers/SourceOrderController.js
+index bf04da6d..c284242a 100644
+--- a/controllers/SourceOrderController.js
++++ b/controllers/SourceOrderController.js
+@@ -4,7 +4,8 @@ const {
+   Sequelize,
+   amazon_sellers: AmazonSeller,
+   accounts: TenantAccount,
+-  tracking_numbers: TrakingNumber
++  tracking_numbers: TrakingNumber,
++  TrackingItem
+ } = require("../models")
+ const { FORWARDING_DOMAIN } = process.env
+ 
+@@ -1209,6 +1210,12 @@ module.exports.exportOrders = async (req, res) => {
+       where,
+       include: [
+         { model: SourceOrderAddress, attributes: ["name", "address1", "address2", "city", "state", "zipcode"] },
++        {
++          model: TrackingItem,
++          attributes: ["tracking_status", "wh_tracking_status", "source_order_id"],
++          required: false,
++          where: { account_id: getTenantId(req) }
++        },
+         includeSourceItem,
+         {
+           model: SupplierOrder,
+diff --git a/utils/listings.js b/utils/listings.js
+index ca956677..9ab0e796 100644
+--- a/utils/listings.js
++++ b/utils/listings.js
+@@ -7,6 +7,7 @@ const { encode } = require("../utils/base64")
+ const { MATCHING_LOGS_URL } = require("../config/constants")
+ 
+ const getResponseFromApi = ({ req, authorization, baseUrl, urlSuffix }) => {
++  console.log("req.body: ", req.body)
+   if (!urlSuffix) urlSuffix = ""
+   const requestOptions = {
+     headers: {
+diff --git a/utils/xlsxUtil.js b/utils/xlsxUtil.js
+index 767a2ebd..32d3c9c9 100644
+--- a/utils/xlsxUtil.js
++++ b/utils/xlsxUtil.js
+@@ -1,5 +1,5 @@
+ const XLSX = require("xlsx")
+-const { map: _map, forEach: _forEach } = require("lodash")
++const { map: _map, forEach: _forEach, groupBy } = require("lodash")
+ const { isExists, createDir } = require("./dir")
+ const { XLSX_SHEET_ORDER_STATS, SOURCE_ORDER_STATUSES } = require("../config/constants")
+ const moment = require("moment")
+@@ -18,7 +18,7 @@ const orderExportCols = () => {
+   }, {})
+ }
+ 
+-const ordersSheetformulae = (l) => {
++const ordersSheetformulae = (l, skus) => {
+   return [
+     { cell: { r: 1, c: 10 }, formula: { f: `SUM(K3:K${l + 1})` } },
+     { cell: { r: 1, c: 11 }, formula: { f: `SUM(L3:L${l + 1})` } },
+@@ -32,13 +32,15 @@ const ordersSheetformulae = (l) => {
+     { cell: { r: 1, c: 19 }, formula: { f: "IF(R2>0,ROUND(S2/R2,2), 0)" } },
+     ...encodeCellRange({ cell: { s: { r: 2, c: 12 }, e: { r: l + 1, c: 12 } }, formula: (r, c) => ({ f: `ROUND((L${r + 1}*15%),2)` }) }),
+     ...encodeCellRange({ cell: { s: { r: 2, c: 17 }, e: { r: l + 1, c: 17 } }, formula: (r, c) => ({ f: `SUM(P${r + 1}:Q${r + 1})` }) }),
+-    ...encodeCellRange({ cell: { s: { r: 2, c: 18 }, e: { r: l + 1, c: 18 } }, formula: (r, c) => ({ f: `IF(U${r + 1}="${SOURCE_ORDER_STATUSES.refund}",0%*(15%*L${r + 1}),IF(P${r + 1}>0,L${r + 1}-M${r + 1}-P${r + 1}-Q${r + 1},0))` }) }),
+-    ...encodeCellRange({ cell: { s: { r: 2, c: 19 }, e: { r: l + 1, c: 19 } }, formula: (r, c) => ({ f: `IF(S${r + 1}>0,ROUND(S${r + 1}/P${r + 1},2),0)` }) })
++    ...encodeCellRange({ cell: { s: { r: 2, c: 18 }, e: { r: l + 1, c: 18 } }, formula: (r, c) => ({ f: `IF((OR(U${r + 1}="${SOURCE_ORDER_STATUSES.refund}", U${r + 1}="${SOURCE_ORDER_STATUSES.cancelled}")),0,IF(P${r + 1}>0,L${r + 1}-M${r + 1}-P${r + 1}-Q${r + 1},0))` }) }),
++    ...encodeCellRange({ cell: { s: { r: 2, c: 19 }, e: { r: l + 1, c: 19 } }, formula: (r, c) => ({ f: `IF(S${r + 1} >0,ROUND(S${r + 1}/P${r + 1},2),0)` }) })
+   ]
+ }
+ 
+-const encodeOrderSheetFormulas = (sheet, l, formula) => {
+-  formula(l).map((item) => {
++const encodeOrderSheetFormulas = (sheet, l, formula, data) => {
++  const skus = groupBy(data, "SKU")
++  formula(l, skus).map((item) => {
++    console.log("item: ", item)
+     sheet[XLSX.utils.encode_cell(item.cell)] = item.formula
+   })
+   return sheet
+@@ -114,9 +116,10 @@ function exportSourceOrders (sourceOrders, { startDate, endDate, utcOffset, time
+   })
+ 
+   const workBook = XLSX.utils.book_new()
++  console.log("data: ", data)
+   let orderWorkSheet = XLSX.utils.json_to_sheet(data, { header: Object.keys(XLSX_SHEET_ORDER_STATS) })
+   orderWorkSheet["!ref"] = XLSX.utils.encode_range({ c: 0, r: 0 }, { c: 23, r: data.length })
+-  orderWorkSheet = encodeOrderSheetFormulas(orderWorkSheet, data.length, ordersSheetformulae)
++  orderWorkSheet = encodeOrderSheetFormulas(orderWorkSheet, data.length, ordersSheetformulae, data)
+   workBook.SheetNames.push("ORDERS")
+   workBook.Sheets.ORDERS = orderWorkSheet
+ 

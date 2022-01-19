@@ -28,7 +28,7 @@ const { SOURCE_ORDER_STATUSES } = require("./config/constants")
         arr.push({ ShipNotice: omit(ShipNotice, ["query", "params"]) })
       }
     }
-    fs.writeFileSync("newErrorsFile.json", JSON.stringify(arr))
+    fs.writeFileSync("ErrorOrders.json", JSON.stringify(arr))
   } catch (error) {
     console.log("error: ", error)
   }
