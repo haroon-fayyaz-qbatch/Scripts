@@ -1,0 +1,159 @@
+{
+  "id": "trk_c8b15ba9741e407d9fa6631bd923f51c",
+  "object": "Tracker",
+  "mode": "production",
+  "tracking_code": "9361289710008835563998",
+  "status": "delivered",
+  "carrier": "USPS",
+  "tracking_details": [
+    {
+      "object": "TrackingDetail",
+      "message": "Picked Up by Shipping Partner, USPS Awaiting Item",
+      "description": "January 16 7:56 am Picked Up by Shipping Partner, USPS Awaiting Item in IMPERIAL, PA",
+      "status": "in_transit",
+      "status_detail": "in_transit",
+      "datetime": "2022-01-16T07:56:00Z",
+      "source": "USPS",
+      "carrier_code": "80",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "IMPERIAL",
+        "state": "PA",
+        "country": null,
+        "zip": "15126"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Departed Shipping Partner Facility, USPS Awaiting Item",
+      "description": "January 18 3:54 am Departed Shipping Partner Facility, USPS Awaiting Item in IMPERIAL, PA",
+      "status": "in_transit",
+      "status_detail": "departed_facility",
+      "datetime": "2022-01-18T03:54:00Z",
+      "source": "USPS",
+      "carrier_code": "82",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "IMPERIAL",
+        "state": "PA",
+        "country": null,
+        "zip": "15126"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Departed Shipping Partner Facility, USPS Awaiting Item",
+      "description": "January 18 11:58 pm Departed Shipping Partner Facility, USPS Awaiting Item in LANCASTER, NY",
+      "status": "in_transit",
+      "status_detail": "departed_facility",
+      "datetime": "2022-01-18T23:58:00Z",
+      "source": "USPS",
+      "carrier_code": "82",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "LANCASTER",
+        "state": "NY",
+        "country": null,
+        "zip": "14086"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Accepted at USPS Destination Facility",
+      "description": "January 19 6:09 am Accepted at USPS Destination Facility in MANSFIELD, PA",
+      "status": "in_transit",
+      "status_detail": "received_at_destination_facility",
+      "datetime": "2022-01-19T06:09:00Z",
+      "source": "USPS",
+      "carrier_code": "AD",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "MANSFIELD",
+        "state": "PA",
+        "country": null,
+        "zip": "16933"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Arrived at Post Office",
+      "description": "January 19 7:24 am Arrived at Post Office in MANSFIELD, PA",
+      "status": "in_transit",
+      "status_detail": "arrived_at_facility",
+      "datetime": "2022-01-19T07:24:00Z",
+      "source": "USPS",
+      "carrier_code": "07",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "MANSFIELD",
+        "state": "PA",
+        "country": null,
+        "zip": "16933"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Out for Delivery",
+      "description": "January 19 7:35 am Out for Delivery in MANSFIELD, PA",
+      "status": "out_for_delivery",
+      "status_detail": "out_for_delivery",
+      "datetime": "2022-01-19T07:35:00Z",
+      "source": "USPS",
+      "carrier_code": "OF",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "MANSFIELD",
+        "state": "PA",
+        "country": null,
+        "zip": "16933"
+      }
+    },
+    {
+      "object": "TrackingDetail",
+      "message": "Delivered, Front Desk/Reception/Mail Room",
+      "description": "January 19 9:21 am Delivered, Front Desk/Reception/Mail Room in MANSFIELD, PA",
+      "status": "delivered",
+      "status_detail": "arrived_at_destination",
+      "datetime": "2022-01-19T09:21:00Z",
+      "source": "USPS",
+      "carrier_code": "01",
+      "tracking_location": {
+        "object": "TrackingLocation",
+        "city": "MANSFIELD",
+        "state": "PA",
+        "country": null,
+        "zip": "16933"
+      }
+    }
+  ],
+  "carrier_detail": {
+    "object": "CarrierDetail",
+    "service": "Parcel Select",
+    "container_type": null,
+    "est_delivery_date_local": null,
+    "est_delivery_time_local": null,
+    "origin_location": "MANSFIELD PA, 16933",
+    "origin_tracking_location": {
+      "object": "TrackingLocation",
+      "city": "IMPERIAL",
+      "state": "PA",
+      "country": null,
+      "zip": "15126"
+    },
+    "destination_location": "MANSFIELD PA, 16933",
+    "destination_tracking_location": {
+      "object": "TrackingLocation",
+      "city": "MANSFIELD",
+      "state": "PA",
+      "country": null,
+      "zip": "16933"
+    },
+    "guaranteed_delivery_date": null,
+    "alternate_identifier": null,
+    "initial_delivery_attempt": "2022-01-19T09:21:00Z"
+  },
+  "public_url": "https://track.easypost.com/djE6dHJrX2M4YjE1YmE5NzQxZTQwN2Q5ZmE2NjMxYmQ5MjNmNTFj",
+  "fees": [{ "object": "Fee", "type": "TrackerFee", "amount": "0.00000", "charged": true, "refunded": false }],
+  "created_at": "2022-01-27T18:15:44Z",
+  "updated_at": "2022-01-27T18:15:44Z"
+}
